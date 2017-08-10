@@ -1,0 +1,17 @@
+The MSC CCD rotation calibration
+CL : angle of alpha-axis with detector x-axis;
+
+12: 314;
+15: 314;
+20: 314;
+25: 314;
+30: 314;
+40: 314;
+50: 314;
+60: 314;
+80: 314;
+100: 314;
+120: 314;
+150: 314 ;
+200: 314;
+250: 314;
