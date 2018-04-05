@@ -1,4 +1,4 @@
-# TEM-tilt-aid
+# ALPHABETA TEM tilting suite
 
 Python software to calculate alpha and beta tilt angles easily of a double tilt stage in a TEM (transmission electron microscope). Most suited for old TEMs and when one has to tilt to many different zone axes or 2-beam / Weak beam conditions.
 
@@ -57,18 +57,10 @@ the coordinate system stuck to the stage. The way to calculate this orientation 
  
  Also there are some functions in there to make a stereographic projection figure.
  
- What I wish to implement still: 
- 
- 1) A user interface
- 
- 2) A "simulated" diffraction pattern (SAED) with or without kikuchi lines
- 
- 3) Bug fixes
- 
- 
  Hope with the things I have provided you can at least already get some use out of this.
  
  temCalcs is dependent on the following packages:
  
- numpy, math, pandas (not used), matplotlib, re, pickle (not yet used), fractions, scipy
+ numpy, math, matplotlib, re,  fractions, scipy, pyQT5
  
+ Since version 2, a user interface is available that will be sufficient for most purposes. It is not meant to be idiot proof, so I'm sure there are tons of buggs to be found. The user interface is implemented using pyQT5 in the GUI.py file. The program can be run by calling "python GUI.py" in the command line. The user interface is rather self explanatory and an upcomming paper will go more into detail on the program.
