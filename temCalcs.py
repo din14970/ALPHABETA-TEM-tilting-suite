@@ -10,6 +10,8 @@ from fractions import Fraction
 import math
 from scipy.optimize import fsolve
 
+
+
 class Constants(object):
     def __init__(self):
         # Planck's constant  
@@ -34,10 +36,22 @@ c=Constants()
 structures = {}
 
 def addStructure(name = "structure"+str(len(structures)), **kwargs): ##doesn't add another structure if the name already exists but creates a new structure object
-    structures[name] = Structure(**kwargs)
+    if name is None or name == "":
+        name = "structure"+str(len(structures))
+    structures[name] = Structure(name, **kwargs)
     return structures[name]
     
 def removeStructure(name):
+    #we also have to get rid of all the potential crystals that have this structure
+    #loop over the microscopes
+    for i in list(microscopes.keys()):
+        micr = getMicroscope(i)
+        for j in list(micr.stages.keys()):
+            stag = micr.getStage(j)
+            for k in list(stag.crystals.keys()):
+                crys = stag.getCrystal(k)
+                if crys.structure.name == name:
+                    stag.removeCrystal(crys.name)
     del structures[name]
     
 def getStructure(name):
@@ -61,8 +75,10 @@ def sizeAngle(mag, direc):
 #Another fundamental list of objects is the number of TEMS. From tems, stages, detectors and crystals are defined.
 microscopes = {}
 
-def addMicroscope(name = "microscope"+str(len(microscopes)), **kwargs):
-    microscopes[name] = TEM(**kwargs)
+def addMicroscope(name = None, **kwargs):
+    if name is None or name == "":
+        name = "microscope"+str(len(microscopes))
+    microscopes[name] = TEM(name, **kwargs)
     return microscopes[name]
     
 def removeMicroscope(name):
@@ -76,10 +92,77 @@ def changeMicroscopeName(oldname, newname):
     del microscopes[oldname]
 
 def saveSession(filname = "session.txt"):
-    pass
+    #Open file
+    f = open(filname+".txt", "w")
+    #Loop through all structures
+    for i in list(structures.keys()):
+        i = getStructure(i)
+        a, b, c, alpha, beta, gamma = i.getCrystallography()
+        str = "structure;%s;%s;%s;%s;%s;%s;%s;" %(i.name, a, b, c, alpha, beta, gamma)
+        f.write(str+"\n")
+    #Loop through all microscopes
+    for i in list(microscopes.keys()):
+        i = getMicroscope(i)
+        str = "microscope;%s;%s;" %(i.name, i.getKv())
+        f.write(str+"\n")
+        #loop through all stages
+        for j in list(i.stages.keys()):
+            j = i.getStage(j)
+            str = "stage;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;" %(i.name, j.name, j.getAlpha(), j.getBeta(), j.getAlphaMin(), j.getAlphaMax(), j.getBetaMin(), j.getBetaMax(), j.alpharev, j.betarev)
+            f.write(str+"\n")
+            #loop through all the crystals
+            for k in list(j.crystals.keys()):
+                k = j.getCrystal(k)
+                str = "crystal;%s;%s;%s;%s;%s;%s;" %(i.name, j.name, k.name, k.getStructure().name, k.dumpOrient(), k.getComment())
+                f.write(str+"\n")
+        #loop through all detectors
+        for j in list(i.detectors.keys()):
+            j = i.getDetector(j)
+            str = "detector;%s;%s;imaging;%s;diffraction;%s;stem;%s;" %(i.name, j.name, j.getCalFileName("imaging"), j.getCalFileName("diffraction"), j.getCalFileName("stem"))
+            f.write(str+"\n")
+            
+    f.close()
 
+def clearSession():
+    """Delete all objects (microscopes and structures)"""
+    microscopes.clear()
+    structures.clear()
+        
 def loadSession(filname = "session.txt"):
-    pass    
+    #Open file
+    f = open(filname)
+    text = f.readlines()
+    
+    for i in text:
+        info = i.replace("\n","").split(";")
+        if info[0].lower() == "structure":
+            ##create a structure
+            addStructure(name = info[1].strip(), a = float(info[2]), b = float(info[3]), c = float(info[4]), alpha = float(info[5]), beta = float(info[6]), gamma = float(info[7]))
+        elif info[0].lower() == "microscope":
+            addMicroscope(name = info[1].strip(), kv=float(info[2]))
+        elif info[0].lower() == "stage":
+            micr = getMicroscope(info[1].strip())
+            micr.addStage(name = info[2].strip(), alpha = float(info[3]), beta = float(info[4]), alphamin = float(info[5]), alphamax = float(info[6]), betamin = float(info[7]), betamax = float(info[8]), alpharev = info[9]=="True", betarev = info[10]=="True")
+        elif info[0].lower() == "detector":
+            micr = getMicroscope(info[1].strip())
+            ccd = micr.addDetector(name=info[2].strip())
+            #check if the calibrations were ever made
+            if info[4]: #imaging
+                ccd.setCalibration(info[4], mode = "imaging", type = "r")
+            if info[6]: #diffraction
+                ccd.setCalibration(info[6], mode = "diffraction", type = "r")
+            if info[8]: #stem
+                ccd.setCalibration(info[8], mode = "stem", type = "r")
+        elif info[0].lower() == "crystal":
+            micr = getMicroscope(info[1].strip())
+            stag = micr.getStage(info[2].strip())
+            crl = stag.addCrystal(info[4].strip(), info[3])
+            crl.reconstructOrient(info[5])
+            crl.setComment(info[6])
+        else:
+            pass
+        
+    f.close()
 
 """Rotation matrixes"""
 def XR(d, rnd=10):
@@ -110,7 +193,9 @@ def invmat():
     return ZR(180)
 
 class TEM(object):
-    def __init__(self, kv=300):
+    def __init__(self, name, kv=300):
+        #name of the microscope
+        self.name = name
         #Overpotential in volts
         self.v = kv*1e3
         self.wavelength = self.calcLambda(self.v)
@@ -120,11 +205,16 @@ class TEM(object):
         self.detectors = {}
         #Maybe should leave option open of having more than one stage
         self.stages = {}
+    
+    def setName(self, name):
+        #also change this in the TEM dictionary
+        microscopes[name] = microscopes.pop(self.name)
+        self.name = name
         
     def addStage(self, name = "", **kwargs):
         if name == "":
             name = "stage"+str(len(self.stages))
-        self.stages[name] = Stage(self, **kwargs)
+        self.stages[name] = Stage(self, name = name, **kwargs)
         return self.stages[name]
     
     def getStage(self, name):
@@ -140,7 +230,7 @@ class TEM(object):
     def addDetector(self, name="", **kwargs):
         if name == "":
             name = "detector"+str(len(self.detectors))
-        self.detectors[name] = Detector(self, **kwargs)
+        self.detectors[name] = Detector(self, name = name, **kwargs)
         return self.detectors[name]
     
     def getDetector(self, name):
@@ -155,6 +245,7 @@ class TEM(object):
     
     def setKv(self, kv):
         #Overpotential in volts
+        kv = float(kv)
         self.v = kv*1e3
         self.wavelength = self.calcLambda(self.v)
         self.ewaldR = 1/self.wavelength
@@ -167,6 +258,8 @@ class TEM(object):
             return self.ewaldR
         elif units == "nm":
             return self.ewaldR/1e9
+        elif units == "angstrom":
+            return self.ewaldR/1e10
         else:
             print("Those units are not recognized at the moment.")
             return none
@@ -181,17 +274,22 @@ class TEM(object):
 
 class Stage(object):
     """The stage of the TEM can tilt with alpha and beta and stores its own state."""
-    def __init__(self, TEM, alpha =0, beta = 0):
+    def __init__(self, TEM, name = "", alpha =0, beta = 0, alphamin = -30, alphamax = 30, betamin = -20, betamax = 20, alpharev = False, betarev = False):
         #the stage needs to know which TEM it belongs to
         self.TEM = TEM
+        
+        self.name = name
         
         self.alpha = alpha
         self.beta = beta
         
-        self.alow = -30
-        self.atop = 30
-        self.blow = -20
-        self.btop = 20
+        self.alow = alphamin
+        self.atop = alphamax
+        self.blow = betamin
+        self.btop = betamax
+        
+        self.alpharev = alpharev
+        self.betarev = betarev
         
         #list of crystals (this determines how the crystal is oriented with respect to the stage)
         self.crystals = {}
@@ -199,11 +297,31 @@ class Stage(object):
         #it should be possible to store interesting orientations as name - [alpha, beta]
         self.orientations = {}
     
+    def setName(self, name):
+        #also change this in the TEM dictionary
+        self.getTEM().stages[name] = self.getTEM().stages.pop(self.name)
+        self.name = name
+    
+    def getAlphaMin(self):
+        return self.alow
+        
+    def getAlphaMax(self):
+        return self.atop
+        
+    def getBetaMin(self):
+        return self.blow
+        
+    def getBetaMax(self):
+        return self.btop
+    
     def setAlphaRange(self, *args):
         self.alow, self.atop = args
         
     def setBetaRange(self, *args):
         self.blow, self.btop = args
+    
+    def setRev(self, *args):
+        self.alpharev, self.betarev = args
     
     def getTEM(self):
         return self.TEM
@@ -211,7 +329,7 @@ class Stage(object):
     def addCrystal(self, structurename, name=""):
         if name=="":
             name = "crystal"+str(len(self.crystals))
-        self.crystals[name]=Crystal(self, structurename)
+        self.crystals[name]=Crystal(name, self, structurename)
         return self.crystals[name]
         
     def changeCrystalName(self, oldname, newname):
@@ -252,7 +370,20 @@ class Stage(object):
         beta=float(self.beta)
         
         #first rotate around xf, then rotate around yf. Because yf rotates with xf we have to apply yr first then xr
-        rot = np.dot(XR(alpha), YR(beta))
+        
+        xx = XR(alpha)
+        
+        yy = YR(beta)
+        
+        ##Make sure reversed or not is considered in definining the rotation matrixes
+        #this correction made 18/03/12
+        if self.alpharev:
+            xx = XR(-alpha)
+        
+        if self.betarev:
+            yy = YR(-beta)
+        
+        rot = np.dot(xx, yy)
         return np.dot(np.array(rot), np.array(vecs))
         
     def absToStage(self, vecs):
@@ -260,13 +391,26 @@ class Stage(object):
         alpha=float(self.alpha)
         beta=float(self.beta)
         
+        xx = XR(-alpha)
+        yy = YR(-beta)
+        
+        ###This correciton made 18/03/12
+        if self.alpharev:
+            xx = XR(alpha)
+        
+        if self.betarev:
+            yy = YR(beta)
+        
         #The inverse of the absolute to stage
-        rot = np.dot(YR(-beta), XR(-alpha))
+        rot = np.dot(yy, xx)
         return np.dot(np.array(rot), np.array(vecs))
     
-    def inrange(self, a, b):
-        a=a/(2*np.pi)*360
-        b=b/(2*np.pi)*360
+    def inrange(self, a, b, units = "radians"):
+        if units == "radians":
+            a=a/(2*np.pi)*360
+            b=b/(2*np.pi)*360
+        if units == "degrees":
+            pass #already good to compare
         atop = self.atop
         alow = self.alow
         btop = self.btop
@@ -279,13 +423,58 @@ class Stage(object):
     def inrangeIncr(self, a, b):
         return self.inrange(a + self.alpha/360*(2*np.pi), b + self.beta/360*(2*np.pi))
     
-    def calcAlphaBeta(self, tozall, verbose=False, rnd = 10):
+    def calcAlphaBeta(self, tozall, rnd = 10):
         """A general rotation matrix is not possible with just alpha and beta. It can only be arranged that a certain vector is set to the optical axis.
         The way to do this was calculated on paper and with sympy. Toz is the vector that needs to be turned on the Z-axis"""
-        return toAllCols(self.calcAlphaBetaVec, tozall, rnd = rnd, verbose=verbose) 
+        return toAllCols(self.calcAlphaBetaVec, tozall, rnd = rnd) 
     
-    def calcAlphaBetaVec(self, toz, verbose=False, rnd = 10):
-        """Calc the alpha and beta one needs to go to for stage vector toz to be moved to the z-axis"""
+    def calcAlphaBetaVec(self, toz, rnd = 10):
+        """18/03/12 The new simplified script to calc the alpha and beta one needs to go to for stage vector toz to be moved to the z-axis"""
+        
+        #the whole of this script works with radians until the conversion at the end
+        #normalize
+        toz = toz/np.linalg.norm(toz)
+            
+        c = toz[0]#+1e-15
+        d = toz[1]#+1e-15
+        f = toz[2]#+1e-15
+
+        length = np.sqrt(c**2+d**2+f**2)
+        
+        #print("[%s %s %s] %s" %(c, d, f, length))
+        
+        #we have to solve a particular equation, namely tilt(alpha, beta)*stage vec = abstoStage([001]) for alpha and beta
+        def equation(x, sv): #this is a wrapper for the next equation because the third element is redundant and should not be returned
+            alpha, beta = x
+            y = miller(0, 0, 1)
+            #y = self.absToStage(miller(0, 0, 1))
+            if self.alpharev:
+                alpha = -alpha
+            if self.betarev:
+                beta = -beta
+            A = np.dot(XR(alpha), YR(beta))
+            res = np.dot(A, sv) - y
+            return res
+            
+        def tosolve(x, sv):
+            res = equation(x, sv)
+            return (res[0], res[1]) #apparently we can't use 3 things to evaluate, the third will be supplied as test
+        
+        alpha, beta = fsolve(tosolve, (0,0), args = (toz)) #anser is already in degrees
+        
+        #check the vector is in range
+        def test(a, b):
+            #is the third element also 0? - it may have mapped on -1, then the third element will be almost -2
+            thirdelem = equation((alpha, beta), toz)[2]
+            return (round(thirdelem,6)==0 and self.inrange(a, b, units = "degrees"))
+
+        if test(alpha, beta):
+            return np.array([np.round(alpha, rnd), np.round(beta, rnd)])
+        else:
+            return np.array([np.nan, np.nan])
+    
+    def calcAlphaBetaVecOld(self, toz, verbose=False, rnd = 10):
+        """Calc the alpha and beta one needs to go to for stage vector toz to be moved to the z-axis. This old script investigates all angle possibilities between 0-360 degrees, whereas the new one simplifies it."""
         
         #normalize
         toz = toz/np.linalg.norm(toz)
@@ -360,16 +549,22 @@ class Stage(object):
             
 class Detector(object):
     """A detector object stores it's own rotation with respect to the x-axis of the holder."""
-    def __init__(self, TEM, diffrot=None, imrot=None, stemrot=None, diffpixcal=None, impixcal=None, stempixcal=None):
+    def __init__(self, TEM, name = "", diffrot=None, imrot=None, stemrot=None, diffpixcal=None, impixcal=None, stempixcal=None):
         #the detector needs to know which TEM it belongs to
         self.TEM = TEM
         
+        #name
+        self.name = name
+        
         #the rotation of the diffraction pattern
         self.diffrot = diffrot
+        self.diffrotfile = ""
         #This is the rotation of the image on any detector except HAADF
         self.imrot = imrot
+        self.imrotfile = ""
         #this is the rotation of the HAADF image in STEM or the rotation of the Ronchigram on the TV or GIF CCD
         self.stemrot = stemrot
+        self.stemrotfile = ""
         
         #image mode size calibration
         self.impixcal = impixcal
@@ -378,9 +573,46 @@ class Detector(object):
         #Stem size calibration
         self.stempixcal = stempixcal
     
+    def getMags(self, mod):
+        if mod == "Diffraction":
+            return sorted(list(self.diffrot.keys()))
+        elif mod == "STEM":
+            return sorted(list(self.stemrot.keys()))
+        elif mod == "Imaging":
+            return sorted(list(self.imrot.keys()))
+        else:
+            return None
+    
     def getTEM(self):
         return self.TEM
         
+    def getName(self):
+        return self.name
+    
+    def setName(self, name):
+        #also change this in the TEM dictionary
+        self.getTEM().detectors[name] = self.getTEM().detectors.pop(self.name)
+        self.name = name
+    
+    def getCalibration(self, mode):
+        if mode=="STEM":
+            return self.stemrot
+        elif mode == "Diffraction":
+            return self.diffrot
+        elif mode == "Imaging":
+            return self.imrot
+        else:
+            return None
+    
+    def getCalFileName(self, mode):
+        """Return the file names of the particular mode"""
+        if mode == 0 or mode=="diffraction" or mode == "diff" or mode == "d":
+            return self.diffrotfile
+        if mode == 1 or mode=="imaging" or mode == "img" or mode=="i":
+            return self.imrotfile
+        if mode == 2 or mode=="STEM" or mode == "stem" or mode=="s":
+            return self.stemrotfile
+    
     def setCalibration(self, filename, mode = "diffraction", type = "rotation"):
         """This function sets the correct calibration dictionary in the right variables"""
         calib = open(filename).read()
@@ -391,16 +623,19 @@ class Detector(object):
             if mode == 0 or mode=="diffraction" or mode == "diff" or mode == "d":
                 if type ==0 or type == "rotation" or type == "r" or type =="rot":
                     self.diffrot = diction
+                    self.diffrotfile = filename
                 if type ==1 or type == "size" or type == "s" or type =="scale":
                     self.diffpixcal = diction
             if mode == 1 or mode=="imaging" or mode == "img" or mode=="i":
                 if type ==0 or type == "rotation" or type == "r" or type =="rot":
                     self.imrot = diction
+                    self.imrotfile = filename
                 if type ==1 or type == "size" or type == "s" or type =="scale":
                     self.impixcal = diction
             if mode == 2 or mode=="STEM" or mode == "stem" or mode=="s":
                 if type ==0 or type == "rotation" or type == "r" or type =="rot":
                     self.stemrot = diction
+                    self.stemrotfile = filename
                 if type ==1 or type == "size" or type == "s" or type =="scale":
                     self.stempixcal = diction
             
@@ -409,14 +644,14 @@ class Detector(object):
     
     def getRot(self, mode, setting):
         """This function gets the rotation angle of the detector. The rotation angle is how the absolute X and Y appear rotated on the detector. This must be tabulated and supplied."""
-        try:
-            if mode == 0 or mode=="diffraction" or mode == "diff" or mode == "d":
-                return self.diffrot[setting]
-            if mode == 1 or mode=="imaging" or mode == "img" or mode=="i":
-                return self.imrot[setting]
-            if mode == 2 or mode=="STEM" or mode == "stem" or mode=="s":
-                return self.stemrot[setting]
-        except:
+        
+        if mode == 0 or mode=="diffraction" or mode =="Diffraction" or mode == "diff" or mode == "d":
+            return self.diffrot[setting]
+        elif mode == 1 or mode=="imaging" or mode == "Imaging" or mode == "img" or mode=="i":
+            return self.imrot[setting]
+        elif mode == 2 or mode=="STEM" or mode == "stem" or mode=="s":
+            return self.stemrot[setting]
+        else:
             print("This detector seems to not have a calibration for this setting")
             return 0
 
@@ -495,7 +730,10 @@ class Detector(object):
     
 class Structure(object):
     """The structure class contains all the crystallographic data and calculations. The Crystal class can inherit from this class."""
-    def __init__(self, a=1, b=1, c=1, alpha=90, beta=90, gamma=90):
+    def __init__(self, name, a=1, b=1, c=1, alpha=90, beta=90, gamma=90):
+        
+        self.name = name
+        
         self.a=a
         self.b=b
         self.c=c
@@ -503,7 +741,7 @@ class Structure(object):
         self.beta=beta
         self.gamma=gamma
         
-        self.typ = self.getCrystalClass()
+        #self.typ = self.getCrystalClass()
         
         #RM takes miller indices and transforms them to coordinates in the cartesian system stuck to the crystal
         self.RM = self.getRealMatrix()
@@ -520,8 +758,14 @@ class Structure(object):
         #the recyprocal metric tensor is simply the inverse
         self.recypG = np.linalg.inv(self.G)
     
-    def changeCrystallography(self, a, b, c, alpha, beta, gamma):
-        self.__init__(a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
+    def setName(self, name):
+        #also change this in the TEM dictionary
+        structures[name] = structures.pop(self.name)
+        self.name = name
+        
+    def changeCrystallography(self, name, a, b, c, alpha, beta, gamma):
+        self.setName(name)
+        self.__init__(name, a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
     
     def getCrystallography(self):
         return self.a, self.b, self.c, self.alpha, self.beta, self.gamma
@@ -530,7 +774,7 @@ class Structure(object):
         """This function returns the coordinates in the cartesian coordinate system stuck to the crystal given a set of miller indices as columns or an array. Standard it will be assumed miller indices as defined by the real coordinate system, but recyp is also valid and must be supplied as typ = 'recyp' as argument"""
         if typ=="real":
             return np.dot(np.array(self.RM), np.array(vec))
-        elif typ=="recyp":
+        elif typ=="recyp" or typ=="recyprocal":
             return np.dot(np.array(self.RRM), np.array(vec))
         else:
             return None
@@ -539,7 +783,7 @@ class Structure(object):
         """This function returns the miller indices given coordinates in the cartesian system stuck to the crystal. Standard it will be assumed miller indices as defined by the real coordinate system, but recyp is also valid and must be supplied as typ = 'recyp' as argument"""
         if typ=="real":
             return np.dot(np.array(self.invRM), np.array(vec))
-        elif typ=="recyp":
+        elif typ=="recyp" or typ=="recyprocal":
             return np.dot(np.array(self.invRRM), np.array(vec))
         else:
             return None
@@ -557,20 +801,21 @@ class Structure(object):
         car = self.millerToCartesian(vec)
         #convert the cartesian to recyp space miller
         return self.cartesianToMiller(car, typ="recyp")
-        
-    def getCrystalClass(self):
+    
+    @staticmethod
+    def getCrystalClass(a, b, c, alpha, beta, gamma):
         typ = ""
-        if self.a==self.b and self.b==self.c and self.alpha==90 and self.beta==90 and self.gamma==90:
+        if a==b and b==c and alpha==90 and beta==90 and gamma==90:
             typ = "cubic"
-        elif self.a==self.b and self.alpha==90 and self.beta==90 and self.gamma==90:
+        elif a==b and alpha==90 and beta==90 and gamma==90:
             typ = "tetragonal"
-        elif self.alpha==90 and self.beta==90 and self.gamma==90:
+        elif alpha==90 and beta==90 and gamma==90:
             typ = "orthorhombic"
-        elif self.a==self.b and self.gamma==120 and self.alpha==90 and self.beta==90:
+        elif a==b and gamma==120 and alpha==90 and beta==90:
             typ = "hexagonal"
-        elif self.a==self.b and self.b==self.c and self.alpha==self.beta and self.beta==self.gamma:
+        elif a==b and b==c and alpha==beta and beta==gamma:
             typ = "rhombohedral"
-        elif self.gamma == 90 and self.alpha==90:
+        elif gamma == 90 and alpha==90:
             typ = "monoclinic"
         else:
             typ = "triclinic"
@@ -587,8 +832,9 @@ class Structure(object):
         gamma=float(self.gamma)/360*2*np.pi
         av=np.array([a, 0, 0])
         bv=np.array([round(b*np.cos(gamma), rnd), round(b*np.sin(gamma), rnd), 0])
-        c1=round(c*np.cos(beta), rnd)
-        c2=round(c*(np.cos(alpha)-np.cos(beta)*np.cos(gamma)), rnd)
+        c1=round(c*np.cos(beta), rnd) #this can be solved from the dot product between c and a vectors
+        #c2=round(c*(np.cos(alpha)-np.cos(beta)*np.cos(gamma)), rnd) #this can be solved from the dot product between c and b vectors
+        c2 = (c*b*np.cos(alpha) - c1*bv[0])/(bv[1])
         c3=round(np.sqrt(c**2-c1**2-c2**2), rnd)
         cv=np.array([c1, c2, c3])
         matR=np.array([av, bv, cv]).T
@@ -616,6 +862,7 @@ class Structure(object):
         mat=np.array([[a**2, round(a*b*np.cos(gamma), rnd), round(a*c*np.cos(beta), rnd)],[round(b*a*np.cos(gamma), rnd), b**2, round(b*c*np.cos(alpha), rnd)],[round(c*a*np.cos(beta), rnd), round(c*b*np.cos(alpha), rnd), c**2]])
         return mat
         
+    
     def getSym(self, vec, checksame = False, typ = "real", unc = 1e-9):
         """Returns all the possible permutations of miller indices/vectors as columns in a matrix. Only returns the vectors that are crystallographically identical if checksame is set True. Real and recyprocal vectors are both valid"""
         vec=np.array(vec) #make sure vec is an array. This way a list is also accepted.
@@ -629,12 +876,17 @@ class Structure(object):
             vn.append(np.array([-vec[val1], vec[val2], vec[val3]])) #the one with the first element negative
             vn.append(np.array([vec[val1], -vec[val2], vec[val3]])) #the one with the second element negative
             vn.append(np.array([vec[val1], vec[val2], -vec[val3]])) #the one with the third element negative
+            
+            vn.append(np.array([vec[val1], vec[val3], vec[val2]])) #depending on i, the values are switched. 8 extra vectors per permutations must possibly be added: the one only with switched numbers.
+            vn.append(np.array([-vec[val1], vec[val3], vec[val2]])) #the one with the first element negative
+            vn.append(np.array([vec[val1], -vec[val3], vec[val2]])) #the one with the second element negative
+            vn.append(np.array([vec[val1], vec[val3], -vec[val2]])) #the one with the third element negative
             for j in vn: #all are checked to see whether they already exist in the matrix
                 if not isExist(tmpmat, j): #if they don't they get added
                     tmpmat = np.c_[tmpmat, j]
                 if not isExist(tmpmat, -j):
                     tmpmat = np.c_[tmpmat, -j]
-                    
+        
         if checksame and self.typ!="cubic":
             #in case we only want those vectors that are crystallographically the same length. If the matrix is cubic we know we don't have to eliminate anything.
             #tst is the length of the supplied vector
@@ -644,9 +896,9 @@ class Structure(object):
             #get all the columns from tempmat where the difference between the length of the supplied vector and the equivalent vectors is negligible
             tmpmat2 = tmpmat[:, abs(others-tst)<unc]
             tmpmat = tmpmat2
-        
+            
         return tmpmat
-        
+    
     def getVectorDot(self, vec1, vec2, typ="real"):
         """Get the dot product between two miller indices. The vectors can be defined in real space or recyprocal space but must both be defined in the same space. Otherwise the normal dot product is applicable. A list of COLUMN vectors can also be supplied or 1 array"""
         if typ=="real":
@@ -660,7 +912,7 @@ class Structure(object):
         """The length of a certain real space vector or plane normal depending on the type,  A list of ROW vectors can also be supplied, an array of 1 dimension will be returned"""
         return np.array(np.matrix(np.sqrt(self.getVectorDot(vec, vec, typ=typ))).diagonal())
             
-    def getVectorAngle(self, vec1, vec2, typ="real", units = "radians"):
+    def getVectorAngle(self, vec1, vec2, typ="real", units="radians"):
         #! still some strange behavior when testing when vec1 or vec2 is a one dimensional array and the other is not. Otherwise it works perfectly. This has to do with the way the division happens with matrix/arrays. Fix later.
         """The angle between two vectors in real or recyprocal space,  A list of Column vectors can also be supplied, an array of 2 dimensions will be returned"""
         num= self.getVectorDot(vec1, vec2, typ=typ)
@@ -668,16 +920,86 @@ class Structure(object):
         angls=  np.arccos(np.divide(num, denom))
         if units =="radians":
             return angls
-        if units =="degrees":
+        elif units =="degrees":
             return angls/(2*np.pi)*360
         else:
             print("Those units aren't valid.")
             return None
+            
+            
+    def getZoneRefPairs(self, l1, a1, l2, a2, maxind = 5, err = 0.5, err2 = 2, verbose = False):
+        """This function helps transform lengths and directions measured in the diffraction pattern to reflections and zones.
+        This is essentially a help for indexing.
+        As input you provide the length and angle measured from 2 reflections in a diffraction pattern. Make sure angles are measured properly!
+        Enter lengths in nm^-1 because that is usually the case in DM. Angles in degrees.
+        Optional arguments are the largest valu of h, k or l to search, the +/- error on the length where it's a match (in nm^-1), and the +/- error on the angle between reflections, in degrees 
+        Returned is (matching reflections to l1, the calculated lengths vector, matching reflections to l2, the calculated lengths vector, the angle between them, the calculated zone axis)"""
+        
+        #l1 and l2 are often times in nm^-1. Convert to angstrom^-1.
+        l1 = l1/10
+        l2 = l2/10
+        err = err/10
+        #Crucial thing is angle between the vectors to differentiate them
+        a = abs(a2-a1)
+        
+        #first get a length match, only positive vectors need to be considered
+        #construct a list of possible combined zones in which to search.
+        tryvecs = getHKLlist(maxind = maxind).T
+        #Make all the possible permutations of each unique type of indices
+        longlist = np.array([[0,0,0]]).T
+        for i in tryvecs:
+            cps = np.array(self.getSym(i))
+            longlist = np.c_[longlist, cps]
+        
+        #find the length of the vectors assuming they are recyprocal lattice points
+        lv = self.getVectorLength(longlist, typ = "recyp")[0]
+        
+        #find where l1 and l2 match the length array. Then find the vectors matching the indices.
+        indxes1 = np.where(np.logical_and(lv<l1+err, lv>l1-err))[0]
+        vecs1 = longlist[:, indxes1]
+        
+        indxes2 = np.where(np.logical_and(lv<l2+err, lv>l2-err))[0]
+        vecs2 = longlist[:, indxes2]
+        
+        #find angles between all the vectors that are ok in length
+        angls = self.getVectorAngle(vecs1, vecs2, typ = "recyp", units = "degrees")
+        #find indexes of those vectors where the angle between them are ok
+        anglindx = np.where(np.logical_and(angls<a+err2, angls>a-err2))
+        
+        #find the vectors that match the good fit for the angle
+        #rows or anglindx[0] matches vec1, columns or anglindx[1] matches vec2
+        match1 = vecs1[:, anglindx[0]]
+        match2 = vecs2[:, anglindx[1]]
+        matchangls = angls[anglindx[0], anglindx[1]]
+        matchl1 = self.getVectorLength(match1, typ = "recyp")
+        matchl2 = self.getVectorLength(match2, typ = "recyp")
+        
+        zones = calcCross(match1, match2)
+        
+        if verbose:
+            
+            print("All testing vectors:")
+            print(longlist)
+            print("Lengths of the vectors:")
+            print(lv)
+            print("Matches to l1")
+            print(indxes1)
+            print(vecs1)
+            print("Matches to l2")
+            print(indxes2)
+            print(vecs2)
+            print("Angles between l1 and l2:")
+            print(angls)
+            
+        #put into right format to output
+        return match1.T.tolist(), matchl1[0].tolist(), match2.T.tolist(), matchl2[0].tolist(), matchangls.tolist(), zones.T.tolist()
+        
+        
 
         
 class Crystal(object):
     
-    def __init__(self, stage, structurename):
+    def __init__(self, name, stage, structurename, comment = ""):
         self.structure = getStructure(structurename) #!note the globally defined getStructure as opposed to self.getstructure
         self.stage = stage #the crystal needs to know which stage it belongs to
         
@@ -685,12 +1007,38 @@ class Crystal(object):
         self.orient = np.identity(3)
         #the inverse of the orientation matrix does not need to be defined -> orthogonal so .T is the inverse already. 
         #self.orient.T takes vectors from the cartesian system stuck on the crystal to the stage coordinates
+        self.name = name
+        self.comment = comment
+    
+    def dumpOrient(self):
+        """Returns a string representation of the orient matrix for saving purposes"""
+        s = str(self.orient.flatten().tolist()).replace("[", "").replace("]", "") #make a list of the form "f, f, ...."
+        return s
+    
+    def reconstructOrient(self, s):
+        """Reconstructs and saves the orient matrix from a string."""
+        self.orient = np.fromstring(s, dtype = np.float64, sep = ",").reshape(3, 3)
+        return self.orient
+    
+    def getComment(self):
+        return self.comment
+        
+    def setComment(self, cmnt):
+        self.comment = cmnt
+    
+    def setName(self, name):
+        #also change this in the TEM dictionary
+        self.getStage().crystals[name] = self.getStage().crystals.pop(self.name)
+        self.name = name
     
     def changeCrystallography(self, *args):
         pass #can't change the crystallography of the structure from the crystal so it is overwritten here
     
     def getCrystallography(self):
         return self.structure.getCrystallography()
+    
+    def getStage(self):
+        return self.stage
     
     def getStructure(self):
         return self.structure
@@ -765,7 +1113,11 @@ class Crystal(object):
             print("Miller (%s):" %(typ))
             print(cryscoords)
         if integer:
-            return integerRep(cryscoords)
+            temp = integerRep(cryscoords)
+            if max(np.absolute(temp))>10:
+                return cryscoords/np.linalg.norm(cryscoords)
+            else:
+                return temp
         else:
             return cryscoords
     
@@ -812,13 +1164,13 @@ class Crystal(object):
         self.orient=ormat
     
     def calcSampleTilt(self, g, n=1, units = "degrees"):
-        """Sample tilt necessary to put reflection ng into two-beam condition assuming you start from zone axis"""
-        #get the length of vector g in nm-1
+        """Sample tilt in degrees necessary to put reflection ng into two-beam condition assuming you start from zone axis"""
+        #get the length of vector g in angstrom^-1
         length = self.getVectorLength(g, typ="recyp")[0,0]
         #get the length of the radius of the ewald sphere
-        #convert to nm-1
+        #convert to angstrom^-1
         #K0 = 507.93 for kv 300
-        K0 = self.stage.getTEM().getEwaldR(units = "nm")
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
         ans = np.pi/2 - np.arccos(n*length/2/K0)
         if units == "degrees":
             return ans/(2*np.pi)*360
@@ -832,12 +1184,12 @@ class Crystal(object):
     
     def calcBeamTilt(self, g, n, k, units = "degrees"):
         """This calculates how much the beam needs to be tilted when beam ng is active in order for beam kg to get on the optical axis"""
-        #get the length of vector g in nm-1
+        #get the length of vector g in angstrom^-1
         length = self.getVectorLength(g, typ="recyp")[0,0]
         #get the length of the radius of the ewald sphere
-        #convert to nm-1
+        #convert to angstrom^-1
         #K0 = 507.93
-        K0 = self.stage.getTEM().getEwaldR(units = "nm")
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
         
         yot = self.calcSampleTilt(g, n, units = "radians")
         thet = np.pi/2 - np.arccos(k*length*np.cos(yot)/K0)
@@ -853,12 +1205,12 @@ class Crystal(object):
         
     def calcNfromAngles(self, g, sa, ba):
         """This method calculates the active 'n' after a given sample angle tilt and beam angle tilt"""
-        #get the length of vector g in nm-1
+        #get the length of vector g in angstrom^-1
         length = self.getVectorLength(g, typ="recyp")[0,0]
         #get the length of the radius of the ewald sphere
-        #convert to nm-1
+        #convert to angstrom^-1
         #K0 = 507.93
-        K0 = self.stage.getTEM().getEwaldR(units = "nm")
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
         
         #takes sa and ba as radian quantitites!
         #this calculation was done on paper, sa = sample angle = phi, ba = beam angle = theta. This was purely geometric.
@@ -876,33 +1228,51 @@ class Crystal(object):
         return ans
 
     def calcWB2beam(self, g, k, i):
-        """This method calculates what the correct 2-beam tilt condition should be (n) if we want the ewald sphere to cut through ig after the beam tilt so that reflection k is centered"""
-        #get the length of vector g in nm-1
+        """This method calculates what the correct 2-beam tilt condition should be (n) if we want the ewald sphere to cut through i*g after the beam tilt so that reflection k is centered"""
+        #get the length of vector g in angstrom^-1
         length = self.getVectorLength(g, typ="recyp")[0,0]
         #get the length of the radius of the ewald sphere
-        #convert to nm-1
+        #convert to angstrom^-1
         #K0 = 507.93
-        K0 = self.stage.getTEM().getEwaldR(units = "nm")
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
         
-        #the angle between the beam and the reflections can be easily calculated 
+        #let us assume the sample is tilted by phy and there is a beam tilt theta such that kg is on the optical axis and ig is excited. i is n in many books.
+        #Here we calculate n0 -> if there is no beam tilt, i.e. before putting k on the optical axis, what is the excited beam to tilt to.
+        #the angle between the beam and the row of reflections can be easily calculated 
         ang = np.arccos(i*length/2/K0)
-        #need to solve the following equation numericaly:
+        #The sample has a certain tilt phi. When kg is on the optical axis, then k*l*cos(phi) = K0*cos(ang+phi). To solve sample tilt, we must hence solve the following equation.
         def eq(phi):
             return np.arccos(k*length*np.cos(phi)/K0)-ang-phi
         
         phi = fsolve(eq, 0)
-        #from the known phi, the initial 2-beam can be determined
+        #from the known phi, the initial 2-beam can be determined at 0 beam tilt. This is finding the distance between the point 0,0 and the intersection between the ewald sphere over 0 and a line going at an angle phi with the x-axis.
         lent = 2*K0*np.sin(phi)
         
         return (lent/length)[0]
-
+    
+    def calcSgSimple(self, g, k, i, units = "nm"):
+        """Calculate Sg on the same basis as calcWB2beam but this only works if the imaging reflection is inside the ewald wphere and n>k"""
+        length = self.getVectorLength(g, typ="recyp")[0,0]
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
+        ang = np.arccos(i*length/2/K0)
+        def eq(phi):
+            return np.arccos(k*length*np.cos(phi)/K0)-ang-phi
+        phi = fsolve(eq, 0)
+        sg = K0-(K0*np.sin(ang+phi) - k*length*np.sin(phi))
+        #Testing the simpler formula in the book by kirk
+        #print((i-1)*length**2/(2*K0)*10) tried on 19/03/18 and it matches well
+        if units == "angstrom":
+            return sg[0] #in angstrom-1
+        if units == "nm":
+            return sg[0]*10
+    
     def calcSg(self, g, n, k, n2, verbose=False):
         #get the length of vector g in nm-1
         length = self.getVectorLength(g, typ="recyp")[0,0]
         #get the length of the radius of the ewald sphere
         #convert to nm-1
         #K0 = 507.93
-        K0 = self.stage.getTEM().getEwaldR(units = "nm")
+        K0 = self.stage.getTEM().getEwaldR(units = "angstrom")
         
         #n2 is used for calculating sg, usually this will be k, the reflection used for imaging 
         yot = self.calcSampleTilt(g, n, units = "radians")
@@ -965,10 +1335,136 @@ class Crystal(object):
             print(car)
             print("Stage:")
             print(stg)
-        return self.stage.calcAlphaBeta(stg, verbose=verbose, **kwargs)
+        return self.stage.calcAlphaBeta(stg, **kwargs)
     
-    def getAlphaBetaWBeam(self, g, n=1, k=3, outzone = 8):
-        pass
+    def isReachable(self, vec, typ = "real", verbose = False, **kwargs):
+        """This function returns true or false whether the particular vector can be reached by the stage tilt"""
+        res = self.getAlphaBetaMiller(vec, typ=typ, verbose = verbose, **kwargs)
+        ###test now which columns are nan
+        #sum yields the sum over the rows or nan if it contains nan. Then isnan yields whether it is a nan or not.
+        #if it's a nan it should say False, it is not reachable
+        return np.invert(np.isnan(np.sum(res, 0)))
+    
+    def nearestZone(self, curzone = None, numb = 1):
+        """Return the numb nearest zones (real indices) to the provided zone. If there is no zone provided the current zone is calculated."""
+        ###Numb is as yet not implemented
+        if curzone is None:
+            curzone = self.getZone() #the zone could be some irrational combination which makes an integer representation impossible
+
+        uvwn = normMatrix(curzone) #in case curzone is not provided as a unit vector
+        
+        mx = np.array([])
+        nm = 0
+        #list of types of zones to test
+        
+        lst = [np.array([1,0,0]), np.array([1,1,0]), np.array([1,1,1]), np.array([1,2,0]), np.array([1, 1, 2]), np.array([1, 2, 2]), np.array([1,3,0]), np.array([1,3,1])]
+        #lst = [np.array([1,0,0])]
+        #find the ZA that is closest from a list
+        for i in lst:
+            mat = self.getSym(i)
+            matn = normMatrix(mat)
+            #test which ones are reachable and only take those
+            isr = self.isReachable(matn, verbose = False)
+            matn = matn[:, isr]
+            #test that matn isn't empty; if all are nan then matn should be empty
+            if matn.size>0:
+                #make the dot product with hkl
+                dp = np.dot(matn.T, uvwn)
+                #print(dp)
+                #find where the dot product is maximum - this vector is closest to the current zone
+                indx =  np.argmax(dp)
+                #print(indx)
+                if dp[indx,0]>nm:
+                    #check also that the found zone is not identical to curzone. Since they are both unit vectors, dp = 1
+                    if round(dp[indx,0], 6)!=1:
+                        #if it's larger than the already found dot product, then replace the storage
+                        nm = dp[indx,0]
+                        mx = integerRep(matn[:, indx])
+                        #print(nm)
+                        #print(mx)
+        return mx
+    
+    def getAlphaBetaWBeam(self, g, n=3, k=1, rnd = 5, outzone = 8, za = "current", verbose = False):
+        if str(za)=="current":
+            za = self.getZone(typ="real")
+        #ELSE a ZA must be supplied! Otherwise error.
+        #check if the zone axis and reflection are perpendicular
+        if abs(np.round(np.dot(za, g), rnd))==0:
+            #get the absolute coordinates of the zone axis
+            zax = self.millerToAbs(za)
+            #the z-axis must be rotated outzone. The rotation axis is the reflection.
+            rotax = self.millerToAbs(g, typ="recyp")
+            zdash = np.dot(axisAngle(rotax, outzone), zax) #the new z-axis that we should see when we excite te systematic row
+            #the rotation axis  to tilt to the two beam condition is now the cross product of this and the reflection
+            rotax2 = np.cross(rotax, zdash)
+            
+            #calculate the n necessary to go to 2beam condition i = n
+            n0 = self.calcWB2beam(g, k, n)
+            #calculate the angle necessary to tilt to n0g
+            
+            ang = self.calcSampleTilt(g, n = n0)
+            #the zdash axis is rotated by this amount around rotax2
+            zab = np.dot(axisAngle(rotax2, ang), zdash)
+            #this axis must be converted to miller
+            zabmil = self.absToMiller(zab, typ = "recyp")
+            #This axis must then be brought to the z-axis
+            if verbose:
+                print("Absolute coordinates of the zone axis:")
+                print(zax)
+                print("Z axis rotated out of zone:")
+                print(zdash)
+                print("Z axis rotated to the two-beam:")
+                print(zab)
+                print("Vector to Z axis in miller indices")
+                print(zabmil)
+            #return the alpha and beta
+            return self.getAlphaBetaMiller(zabmil, typ="recyp", verbose=verbose)
+        else:
+            print("This reflection and zone axis are not perpendicular")
+            return np.array([0,0])
+    
+    def getZoneAtAlphaBeta(self, alpha, beta, typ = "real", rnd = 5, verbose = False, integer = True):
+        """It is easiest to change and change back alpha and beta of the stage and just call getZone"""
+        #keep the current stage angles
+        storalpha = self.stage.getAlpha()
+        storbeta = self.stage.getBeta()
+        #set the angles temporarily
+        self.stage.setAlpha(alpha)
+        self.stage.setBeta(beta)
+        #get the zone
+        res = self.getZone(typ=typ, verbose = verbose, integer = integer)
+        #set the angles back
+        self.stage.setAlpha(storalpha)
+        self.stage.setBeta(storbeta)
+        #return the results
+        return res
+        
+    
+    def getAlphaBetaTiltRound(self, g, outzone, za = "current", rnd = 5, verbose = False):
+        """Calculate alpha and beta for getting to a zone outzone away from the zone axis but not a two-beam condition"""
+        if str(za)=="current":
+            za = self.getZone(typ="real")
+        if abs(np.round(np.dot(za, g), rnd))==0:
+            #get the absolute coordinates of the zone axis
+            zax = self.millerToAbs(za)
+            #the z-axis must be rotated outzone. The rotation axis is the reflection.
+            rotax = self.millerToAbs(g, typ="recyp")
+            zdash = np.dot(axisAngle(rotax, outzone), zax) #the new z-axis that we should see when we excite te systematic row
+            #this axis must be converted to miller
+            zabmil = self.absToMiller(zdash, typ = "real")
+            #This axis must then be brought to the z-axis
+            if verbose:
+                print("Absolute coordinates of the zone axis:")
+                print(zax)
+                print("Z axis rotated out of zone:")
+                print(zdash)
+                print("Vector to Z axis in miller indices (real)")
+                print(zabmil)
+            #return the alpha and beta
+            return self.getAlphaBetaMiller(zabmil, typ="real", verbose=verbose)
+        else:
+            print("This reflection and zone axis are not perpendicular")
+            return np.array([0,0])
     
     def getAlphaBetac2Beam(self, g, n=1, outzone = 8, za = "current", rnd=5, verbose = False):
         """Calculate alpha and beta for getting g in a two-beam condition (centered). The beam tilt that is necessary is not considered.
@@ -1053,24 +1549,87 @@ class Crystal(object):
     def getVectorLength(self, vec, typ="real"):
         return self.structure.getVectorLength(vec, typ)
             
-    def getVectorAngle(self, vec1, vec2, typ="real"):
-        return self.structure.getVectorAngle(vec1, vec2, typ)
+    def getVectorAngle(self, vec1, vec2, typ="real", units = "radians"):
+        return self.structure.getVectorAngle(vec1, vec2, typ=typ, units = units)
         
-    def plotCrystalonDetector(self, detector, mode, setting, vecincl = None, typ="real", plotaxes = True, verbose=False):
-        d001 = self.getSym(miller(1, 0, 0), typ=typ)
-        d111 = self.getSym(miller(1, 1, 1), typ=typ)
-        d011 = self.getSym(miller(1, 1, 0), typ=typ)
-        toplotd001 = self.millerToDetector(d001, detector, mode, setting, typ=typ, verbose=verbose)
-        toplotd111 = self.millerToDetector(d111, detector, mode, setting, typ=typ, verbose=verbose)
-        toplotd011 = self.millerToDetector(d011, detector, mode, setting, typ=typ, verbose=verbose)
+    def plotCrystalonDetector(self, detector, mode, setting, vecincl = [], typ="real", plotaxes = True, verbose=False, plotbond = True, hkm = 3):
+        #d001 = self.getSym(miller(1, 0, 0), typ=typ)
+        #d111 = self.getSym(miller(1, 1, 1), typ=typ)
+        #d011 = self.getSym(miller(1, 1, 0), typ=typ)
+        #toplotd001 = self.millerToDetector(d001, detector, mode, setting, typ=typ, verbose=verbose)
+        #toplotd111 = self.millerToDetector(d111, detector, mode, setting, typ=typ, verbose=verbose)
+        #toplotd011 = self.millerToDetector(d011, detector, mode, setting, typ=typ, verbose=verbose)
         
+        vecincl = getHKLlistNoMultipes(maxind = hkm).T.tolist()
+        
+        millers = []
+        tp = []
+        for i in vecincl:
+            i = np.array(i)
+            mil = self.getSym(i, typ = typ)
+            millers.append(mil)
+            toplot = self.millerToDetector(mil, detector, mode, setting, typ=typ, verbose=verbose)
+            tp.append(toplot)
+        
+        #print(millers)
+        #print(tp)
+        
+        #change the type of brackets based on the typ passed
+        brc = []
+        if typ == "real":
+            brc = ["[", "]"]
+        elif typ== "recyprocal":
+            brc = ["(", ")"]
+            
         #make the actual plot
-        fig, ax = plt.subplots(1)
+        fig, ax = plt.subplots(figsize = (7, 6))
         stereographicCanvas(ax)
         
         #plotStereographic(d001, d001, ax, verbose = verbose, s=100, c="b")
         #plotStereographic(d111, d111, ax, verbose = verbose, s=100, c="b")
         #plotStereographic(d011, d011, ax, verbose = verbose, s=100, c="g")
+        
+        if plotbond: #plot the boundaries also
+            detail = 10
+            
+            ##first construct arrays of angles
+            amx=self.stage.getAlphaMax()
+            amn = self.stage.getAlphaMin()
+            bmx = self.stage.getBetaMax()
+            bmn = self.stage.getBetaMin()
+            
+            aar = np.linspace(amn, amx, detail).tolist()
+            bar = np.linspace(bmn, bmx, detail).tolist()
+            
+            #Turn the angles into millers and construct it in the right way as to have 4 lines
+            l1 = [] #the amin line
+            l2 = [] #the amax line
+            for i in aar:
+                l1.append(self.getZoneAtAlphaBeta(i, bmn, typ = typ, integer = False))
+                l2.append(self.getZoneAtAlphaBeta(i, bmx, typ = typ, integer = False))
+                
+            l3 = [] #the amin line
+            l4 = [] #the amax line
+            for i in bar:
+                l3.append(self.getZoneAtAlphaBeta(amn, i, typ = typ, integer = False))
+                l4.append(self.getZoneAtAlphaBeta(amx, i, typ = typ, integer = False))
+            
+            l1 = np.array(l1).T
+            l2 = np.array(l2).T
+            l3 = np.array(l3).T
+            l4 = np.array(l4).T
+            
+            #Turn the millers into detector vectors
+            tpl1 = self.millerToDetector(l1, detector, mode, setting, typ=typ, verbose=verbose)
+            tpl2 = self.millerToDetector(l2, detector, mode, setting, typ=typ, verbose=verbose)
+            tpl3 = self.millerToDetector(l3, detector, mode, setting, typ=typ, verbose=verbose)
+            tpl4 = self.millerToDetector(l4, detector, mode, setting, typ=typ, verbose=verbose)
+            
+            #plotstereographic but editted
+            plotLineStereographic(tpl1, ax)
+            plotLineStereographic(tpl2, ax)
+            plotLineStereographic(tpl3, ax)
+            plotLineStereographic(tpl4, ax)
         
         if plotaxes:
             xaxis = np.array([1, 0, 0]);
@@ -1093,11 +1652,43 @@ class Crystal(object):
             ax.text(sc2*rotx[0], sc2*rotx[1], r"$\alpha$", color = "red", fontsize=14)
             ax.text(sc2*roty[0], sc2*roty[1], r"$\beta$", color = "green", fontsize=14)
         
-        plotStereographic(toplotd001, d001, ax, verbose = verbose, s=100, c="r")
-        plotStereographic(toplotd111, d111, ax, verbose = verbose, s=100, c="b")
-        plotStereographic(toplotd011, d011, ax, verbose = verbose, s=100, c="g")
+        #plotStereographic(toplotd001, d001, ax, verbose = verbose, brc = brc, s=100, c="r")
+        #plotStereographic(toplotd111, d111, ax, verbose = verbose, brc = brc, s=100, c="b")
+        #plotStereographic(toplotd011, d011, ax, verbose = verbose, brc = brc, s=100, c="g")
         
-        plt.show()
+        for i, j in enumerate(millers):
+            plotStereographic(tp[i], j, ax, verbose = verbose, brc = brc)
+        
+        plt.tight_layout()
+        
+        return fig, ax
+        #plt.show()
+
+def getSym(vec, unc = 1e-9):
+        """Returns all the possible permutations of miller indices/vectors as columns in a matrix. Only returns the vectors that are crystallographically identical if checksame is set True. Real and recyprocal vectors are both valid"""
+        vec=np.array(vec) #make sure vec is an array. This way a list is also accepted.
+        tmpmat = np.matrix([vec,-vec]).T #-vec and vec can already be entered as columns of the permutation matrix
+        for i in range(3): #To make the permutations, the elements must be swapped.
+            val1 = i
+            val2 = (i+1)%3
+            val3 = (i+2)%3
+            vn = []
+            vn.append(np.array([vec[val1], vec[val2], vec[val3]])) #depending on i, the values are switched. 8 extra vectors per permutations must possibly be added: the one only with switched numbers.
+            vn.append(np.array([-vec[val1], vec[val2], vec[val3]])) #the one with the first element negative
+            vn.append(np.array([vec[val1], -vec[val2], vec[val3]])) #the one with the second element negative
+            vn.append(np.array([vec[val1], vec[val2], -vec[val3]])) #the one with the third element negative
+            
+            vn.append(np.array([vec[val1], vec[val3], vec[val2]])) #depending on i, the values are switched. 8 extra vectors per permutations must possibly be added: the one only with switched numbers.
+            vn.append(np.array([-vec[val1], vec[val3], vec[val2]])) #the one with the first element negative
+            vn.append(np.array([vec[val1], -vec[val3], vec[val2]])) #the one with the second element negative
+            vn.append(np.array([vec[val1], vec[val3], -vec[val2]])) #the one with the third element negative
+            for j in vn: #all are checked to see whether they already exist in the matrix
+                if not isExist(tmpmat, j): #if they don't they get added
+                    tmpmat = np.c_[tmpmat, j]
+                if not isExist(tmpmat, -j):
+                    tmpmat = np.c_[tmpmat, -j]
+        
+        return tmpmat
         
 def normMatrix(vec):
     """normalize a vector or columns of a matrix. Returns the matrix with normalized columns. If an array was passed a matrix with one column is returned."""
@@ -1109,6 +1700,43 @@ def normMatrix(vec):
     lrp = np.repeat(invl, vec.shape[0], axis=0)
     return np.array(np.multiply(lrp, vec))
 
+def calcCross(vecs1, vecs2, intrep = True):
+    """outputs UVW between the different sets of hkl. They need to be of the same size and in format 3xN. Optionally, a non-integer representation can be returned."""
+    top = np.multiply(vecs1[1, :], vecs2[2,:])-np.multiply(vecs1[2, :], vecs2[1,:])
+    middle = np.multiply(vecs1[2, :], vecs2[0,:])-np.multiply(vecs1[0, :], vecs2[2,:])
+    bottom = np.multiply(vecs1[0, :], vecs2[1,:])-np.multiply(vecs1[1, :], vecs2[0,:])
+    res = np.array([top, middle, bottom])
+    if intrep:
+        return getIntRepAny(res)   
+    else:
+        return res
+
+def getHKLlist(maxind = 5):
+    """Get a list of all unique combinations of 3x[0-maxind] excluding [000]. This is returned as a 3xN array"""
+    lst = []
+    for i in np.arange(maxind+1):
+        for j in np.arange(i, maxind+1):
+            for k in np.arange(j, maxind+1):
+                if i==0 and j==0 and k==0:
+                    pass
+                else:
+                    lst.append([i, j, k])
+    return np.array(lst).T
+
+def getHKLlistNoMultipes(maxind = 5):
+    lst = []
+    for i in np.arange(maxind+1):
+        for j in np.arange(i, maxind+1):
+            for k in np.arange(j, maxind+1):
+                if i==0 and j==0 and k==0:
+                    pass
+                else:
+                    lst.append([i, j, k])
+    #go through the array once more and remove all those where there is multiples
+    nl = getIntRepAny(np.array(lst).T)
+    unique_rows = np.unique(nl, axis=1)
+    return unique_rows
+    
 def calcStereo(vec, rnd=1e-9):
     """takes a matrix containing real vectors (x, y, z) in the columns and calculates the (xproj, yproj) of te stereographic projection."""
     #normalize all columns. Assume the sphere has unit radius.
@@ -1251,7 +1879,7 @@ def stereographicCanvas(ax):
     plt.gca().set_aspect('equal', adjustable='box')
     plt.draw()
 
-def plotStereographic(vecs, labs, ax, verbose=False,  **kwargs):
+def plotStereographic(vecs, labs, ax, verbose=False, brc = ["[", "]"],  **kwargs):
     """The annotated poles of certain vectors are plotted in the stereogram. Vecs should be the vectors after any transformation/rotation"""
     projpospos, projpos, projnegpos, projneg  = calcStereo(vecs)
     if verbose:
@@ -1260,7 +1888,16 @@ def plotStereographic(vecs, labs, ax, verbose=False,  **kwargs):
     labs = labs[:, projpospos]
     x = projpos[0, :].T
     y = projpos[1, :].T
+    #make the size of the pieces inversely proportional to their multiplicity
+    mult = vecs.shape[1]
     for i, xy in enumerate(zip(x, y)):
-        ax.annotate("%s" %(labs[:,i].T), xy=xy, textcoords = "data")
-    ax.scatter(x,y, **kwargs)       
+        ax.annotate("%s" %(str(labs[:,i].T).replace("[[", brc[0]).replace("]]", brc[1])).replace(".", "").replace("-0", "0"), xy=xy, textcoords = "data")
+    ax.scatter([x],[y], s = 100*12/mult, **kwargs)
+
+def plotLineStereographic(vecs, ax, **kwargs):
+    """A line is plotted in the stereographic projection"""
+    projpospos, projpos, projnegpos, projneg  = calcStereo(vecs)
+    x = np.array(projpos[0, :])[0]
+    y = np.array(projpos[1, :])[0]
+    ax.plot(x,y, color = "black", **kwargs)           
         
