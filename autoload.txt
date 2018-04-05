@@ -1,0 +1,5 @@
+structure;Steel;3.66;3.66;3.66;90;90;90;
+microscope;Jeol3000;300.0;
+stage;Jeol3000;Doubletilt;20.0;10.0;-29;31;-21;22;True;False;
+crystal;Jeol3000;Doubletilt;grain1;Steel;0.28759296888083785, -0.5183585555525465, 0.8053537683060873, 0.27646407625458724, -0.7601536015142366, -0.587991595735652, 0.9169830417119285, 0.39175363430728705, -0.07530731183665276;;
+detector;Jeol3000;MSC;imaging;rotationCalibrationMSC-IMG.txt;diffraction;rotationCalibrationMSC-DIFF.txt;stem;;
