@@ -2,9 +2,7 @@
 
 import numpy as np
 import math as ma
-import pandas as pd
 import matplotlib.pyplot as plt
-import pickle
 import re
 from fractions import Fraction
 import math

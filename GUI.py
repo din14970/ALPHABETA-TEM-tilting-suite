@@ -20,7 +20,7 @@ class App(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.title = "TEMTilt v0.01 BETA"
+        self.title = "ALPHABETA v0.01 BETA"
         #self.left = 50
         #self.top = 50
         #self.width = 640
@@ -278,6 +278,15 @@ class microscopeMenu(QWidget):
         self.kvbox.setSizePolicy(sp)
         temlayout.addWidget(self.kvbox, 1, 6)
         
+        #the ewald sphere radius. The angle must be added later when you update the field
+        self.eslbl = QLabel(u"K0")
+        self.eslbl.setToolTip("The radius of the Ewald sphere\n1/electron wavelength")
+        temlayout.addWidget(self.eslbl, 1, 7)
+        self.k0view = QLineEdit(self)
+        self.k0view.setReadOnly(True)
+        self.k0view.setSizePolicy(sp)
+        temlayout.addWidget(self.k0view, 1, 8)
+        
         ######The stage menu#################
         #add the stage dropdown list
         yoffset = 50
@@ -493,6 +502,7 @@ class microscopeMenu(QWidget):
     def updateVoltage(self, value):
         try:
             self.currentTEM().setKv(value)
+            self.updateK0()
         except:
             pass
     
@@ -553,6 +563,13 @@ class microscopeMenu(QWidget):
             self.thetaview.setText(str(val) + u" \u00b0")
         except: #if no mag data can be found
             self.thetaview.setText("")
+    
+    def updateK0(self):
+        try:
+            self.k0view.setText(u"%s 1/\u212B" %(round(self.currentTEM().getEwaldR(units = "angstrom"), 2)))
+        except:
+            #when the current TEM is none
+            self.k0view.setText("")
     
     def currentTEM(self):
         if tc.microscopes:
@@ -698,6 +715,7 @@ class microscopeMenu(QWidget):
             self.edittembut.hide()
             self.deltembut.hide()
             self.kvbox.hide()
+            self.k0view.hide()
             #stage buttons
             self.stagelist.hide()
             self.adstagbut.hide()
@@ -721,8 +739,10 @@ class microscopeMenu(QWidget):
             self.edittembut.show()
             self.deltembut.show()
             self.kvbox.show()
+            self.k0view.show()
             #update the kV box
             self.kvbox.setValue(self.currentTEM().getKv())
+            self.updateK0()
             
             #stage buttons
             self.stagelist.show()
@@ -807,7 +827,7 @@ class structuresMenu(QWidget):
         self.adstrucbut = self.button(logo=".\Images\plus.png", hint = "Add new structure",  action = self.createStructure)
         self.editstrucbut = self.button(logo = ".\Images\edit.png", hint = "Edit structure",  action = self.editStructure)
         self.delstrucbut = self.button(logo=".\Images\delete-icon.png", hint = "Delete structure",  action = self.deleteStructure)
-        self.calcbut = self.button(logo=".\Images\calc.png", hint = "Crystallography calculator",  action = self.showCalculator)
+        self.calcbut = self.button(logo=".\Images\wizard.png", hint = "Indexing wizard",  action = self.showWizard)
         
         layout.addWidget(self.adstrucbut, 1, 2)
         layout.addWidget(self.editstrucbut, 1, 3)
@@ -903,8 +923,8 @@ class structuresMenu(QWidget):
             tc.removeStructure(nt)
             self.updateAll()
     
-    def showCalculator(self):
-        pass
+    def showWizard(self):
+        indexingDialog.getInfo(caller = self.caller)
     
     def currentStruc(self):
         try:
@@ -2288,7 +2308,8 @@ class indexWizard(QWidget):
             return None
     
     def showHelp(self):
-        self.testIndexation()
+        QMessageBox.information(self, " ", "Tilt to some zone axis and capture the diffraction pattern. Of 2 non-colinear reflections (hkl) measure:\n-the distance between (000) and (hkl) in 1/nm.\n-the angle between the detector X-axis and the line that connects (000) and (hkl).\nNote that the X-axis points to the right and that positive angles are clockwise.")
+        #self.testIndexation()
     
     def testIndexation(self):
         self.l1box.setValue(5.6)
@@ -2401,7 +2422,37 @@ class Dialog(QDialog):
             else:
                 values.append(None)
         return values
-    
+
+class indexingDialog(Dialog):
+    """Opens a window with only an indexing wizard widget"""
+    def __init__(self, caller, windowtitle = "Indexing wizard",  **kwargs):
+        super(indexingDialog, self).__init__()
+        #caller is the mainwindow app for access to current settings if necessary
+        self.caller = caller
+        struc = caller.getCurrentStructure()
+        
+        #the wizard
+        self.wiz = indexWizard(struc)
+        
+        #the button box
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Cancel)
+        self.buttonBox.rejected.connect(self.reject)
+        
+        self.makeLayout()
+        self.setWindowTitle(windowtitle)
+        
+    def makeLayout(self):
+        mainLayout = QVBoxLayout()
+        mainLayout.addWidget(self.wiz)
+        mainLayout.addWidget(self.buttonBox)
+        mainLayout.setSizeConstraint(mainLayout.SetFixedSize)
+        self.setLayout(mainLayout) 
+        
+    # static method doesn't have to do much in this case
+    @staticmethod
+    def getInfo(**kwargs):
+        dialog = indexingDialog(**kwargs)
+        result = dialog.exec_()
         
 class microscopeDialog(Dialog):
  
@@ -2609,7 +2660,7 @@ class stageDialog(Dialog):
         qbutton = QPushButton("", self)
         qbutton.setToolTip("What is this?")
         qbutton.setIcon(QIcon(".\Images\question.png"))
-        #qbutton.clicked.connect(action)
+        qbutton.clicked.connect(self.showHelp)
         qbutton.resize(24+6, 24+6)
         qbutton.setIconSize(QSize(24,24))
         qbutton.setSizePolicy(sp)
@@ -2700,6 +2751,9 @@ class stageDialog(Dialog):
         self.items.append(bcheck)
         
         self.formGroupBox.setLayout(layout)
+    
+    def showHelp(self):
+        QMessageBox.information(self, " ", "The \u03b1-axis (X) runs along the double-tilt holder main axis pointed out of the microscope, the absolute Z axis is pointed down the column. The \u03b2-axis (Y) is defined by X x Y = Z at (0,0) tilt. Rotations follow the right hand rule.\n\nIf your holder doesn't follow these conventions, use the 'Reversed?' checkboxes appropriately.")
     
     def anglemaxupdate(self):
         self.alphabox.setMaximum(self.alphamaxbox.value())

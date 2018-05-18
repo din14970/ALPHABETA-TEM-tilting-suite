@@ -1,0 +1,13 @@
+The working combination for compilation:
+- I installed pipenv (as admin) and created a virtual environment for my folder
+- In the virtual environment, I installed scipy, numpy, matplotlib, pyqt5, and pyinstaller using:
+pyenv run pip package_name
+- I ran: pipenv run pyinstaller GUI.py
+- This created a spec file. I modified the spec file to include verbose and to include scipy.messagebox as hiddenimport (whatever that does, it was needed)
+- I ran the command (as admin) in windows powershell:
+pipenv run pyinstaller --onedir --noupx --clean GUI.py
+- This gave me a permission error
+- I ran it again and there was no problem anymore 
+- I mannually coppied the Images folder into the generated dist folder. This finally got me a working exe.
+
+Niels Cautaerts, 18/05/18
