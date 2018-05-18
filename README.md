@@ -1,29 +1,26 @@
 # ALPHABETA TEM tilting suite
 
-Python software to calculate alpha and beta tilt angles easily of a double tilt stage in a TEM (transmission electron microscope). Most suited for old TEMs and when one has to tilt to many different zone axes or 2-beam / Weak beam conditions.
+ALPHABETA is a piece of software written in Python that calculates alpha and beta tilt angles of a double tilt stage in a TEM (transmission electron microscope). The tool comes with an intuitive user interface and can be modified to be used on any TEM to uses a double-tilt holder. Operators that deal with highly deformed materials, small grained materials, or beam-sensitive materials may find this piece of software useful. Once the microscope is calibrated (which can be done in a few minutes) the tool allows the operator to quickly tilt to many different zone axes or 2-beam / Weak beam conditions. The tool also includes a way to plot 
 
-My motivation for making this was the extremely frustrating experience of trying to set up correct
-diffraction conditions on a piece of highly deformed steel (FCC), with dense dislocation network and
-high density of deformation twins. While conventional wisdom dictates that one needs to only follow
-kikuchi lines to arrive at zone axes, the iterative process made this extremely complex and time consuming.
-In addition, many times after having spent time arriving at a new zone, I could discover it was outside of the tilt range.
+ALPHABETA was made by Niels Cautaerts, initially only for Niels Cautaerts. My motivation for making this was the extremely frustrating experience of trying to set up correct diffraction conditions on a sample of highly deformed steel (FCC), with a dense dislocation network and high density of deformation twins. While conventional wisdom dictates that an operator needs to only follow kikuchi lines to arrive at a zone axes, this process was very complex and time consuming on my samples. Often, after having spent time to go to a new zone, I could discover it was outside of the tilt range. Therefore, I decided to build a tool that could simply calculate the required tilts, so I could tilt to the right defraction conditions in image mode.
 
-Therefore, my idea was to be able to simply calculate the required tilts, so I could tilt in image mode.
-Hereby I present you my first attempt, implemented in python.
+Very recently I've managed to bundle ALPHABETA into an excecutable, which you should be able to download. Instructions for running it can be found in the releases. You should be able to put this on a USB stick and take it with you to the microscope.
 
-The engine behind it are some classes and methods in the temCalcs.py file.
+
+The details for those interested, and those that may want to work directly with the scripts and not the GUI:
+
+The engine behind the program are some classes and methods in the temCalcs.py file.
 The main classes:
 
-1) TEM: stores detector and stage objects (even though a TEM usually has only one stage, the option is left open to have multtipe)
-To access a particular detecter, stage and chrystal objects must pass through the TEM.
+1) TEM: stores detector and stage objects (even though a TEM usually has only one stage, the option is left open to have multiple). To access a particular Detector (see later), Stage and Crystal objects must pass through the TEM.
 
 2) Stage: stages contain Crystal objects (see later). It keeps track of its tilt range and current alpha and beta
 setting. It can calculate which alpha and beta it should tilt to given a vector expressed in Stage coordinates.
 
-3) Detector: a detector mainly stores various calibration dictionaries: in which direction do the alpha and beta
-tilt axes lie at different magnifications or camera lenghts. Imaging, Diffraction, STEM are supported. Soon I will
+3) Detector: a detector mainly stores various calibration dictionaries: meaning in which direction do the alpha and beta
+tilt axes lie at different magnifications or camera lenghts. Imaging, Diffraction, and STEM are supported. I may
 generalize this so that a user can add any mode he or she pleases. Size calibration (real size/pixel) can be 
-stored as well but so far has not really proven usefull.
+stored as well but this is not accessible in the GUI.
 
 4) Structure: a structure is the prototype of a crystal. The 7 crystal classes are supported, but no distinction
 is made between space groups - sorry, I work on FCC materials and it seemed too much of a hastle. A structure
@@ -44,7 +41,7 @@ the coordinate system stuck to the stage. The way to calculate this orientation 
  c) Call the calcOrient function on the crystal object, check in the code for the arguments to be provided.
  From thereon out your crystal is correctly anchored to the stage.
  
- Note that it is important that the detectors are accurately callibrated for this to work. Look at the jupyter notebook
+ Note that it is important that the detectors are accurately calibrated for this to work. Look at the jupyter notebook
  for more details
  
  The crystal is the workhorse class. With it you can calculate what alpha and beta you need to tilt to another zone
